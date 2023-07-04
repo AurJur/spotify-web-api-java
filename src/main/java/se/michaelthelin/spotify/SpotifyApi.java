@@ -3,7 +3,10 @@ package se.michaelthelin.spotify;
 import com.google.gson.JsonArray;
 import com.neovisionaries.i18n.CountryCode;
 import se.michaelthelin.spotify.enums.ModelObjectType;
+import se.michaelthelin.spotify.exceptions.SpotifyWebApiException;
+import se.michaelthelin.spotify.model_objects.specification.AlbumSimplified;
 import se.michaelthelin.spotify.model_objects.specification.Artist;
+import se.michaelthelin.spotify.model_objects.specification.Paging;
 import se.michaelthelin.spotify.model_objects.specification.Track;
 import se.michaelthelin.spotify.requests.authorization.authorization_code.AuthorizationCodeRefreshRequest;
 import se.michaelthelin.spotify.requests.authorization.authorization_code.AuthorizationCodeRequest;
@@ -11,6 +14,7 @@ import se.michaelthelin.spotify.requests.authorization.authorization_code.Author
 import se.michaelthelin.spotify.requests.authorization.authorization_code.pkce.AuthorizationCodePKCERefreshRequest;
 import se.michaelthelin.spotify.requests.authorization.authorization_code.pkce.AuthorizationCodePKCERequest;
 import se.michaelthelin.spotify.requests.authorization.client_credentials.ClientCredentialsRequest;
+import se.michaelthelin.spotify.requests.data.AbstractDataRequest;
 import se.michaelthelin.spotify.requests.data.albums.GetAlbumRequest;
 import se.michaelthelin.spotify.requests.data.albums.GetAlbumsTracksRequest;
 import se.michaelthelin.spotify.requests.data.albums.GetSeveralAlbumsRequest;
@@ -39,12 +43,19 @@ import se.michaelthelin.spotify.requests.data.tracks.*;
 import se.michaelthelin.spotify.requests.data.users_profile.GetCurrentUsersProfileRequest;
 import se.michaelthelin.spotify.requests.data.users_profile.GetUsersProfileRequest;
 
+import java.io.IOException;
 import java.net.URI;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
+import java.util.List;
 import java.util.TimeZone;
+import java.util.function.Function;
 import java.util.logging.Logger;
+
+import static java.lang.Thread.*;
 
 /**
  * Instances of the SpotifyApi class provide access to the Spotify Web API.
@@ -606,6 +617,60 @@ public class SpotifyApi {
       .setDefaults(httpManager, scheme, host, port)
       .id(id);
   }
+
+  ///////////MINE START
+  public List<AlbumSimplified> getArtistsAllAlbums(String id) {
+    Function<Offset, GetArtistsAlbumsRequest> getArtistsAlbumsRequestFunction
+      = offset -> this
+      .getArtistsAlbums(id)
+      .offset(offset.offset())
+      .limit(50)
+      .build();
+    List<AlbumSimplified> artistAlbums = doPagingRequest(getArtistsAlbumsRequestFunction);
+    return artistAlbums;
+  }
+
+  private <T, U extends AbstractDataRequest<Paging<T>>> List<T> doPagingRequest(Function<Offset, U> pagingRequestFunction) {
+    List<T> items = new ArrayList<>();
+    String next = "";
+    Offset offset = new Offset(0);
+    do {
+      try {
+        U request = pagingRequestFunction.apply(offset);
+        Paging<T> result = request.execute();
+        items.addAll(Arrays.asList(result.getItems()));
+        next = result.getNext();
+        offset = new Offset(offset.offset() + result.getLimit());
+      } catch (IOException | SpotifyWebApiException | org.apache.hc.core5.http.ParseException e) {
+        StackTraceElement[] stackTraceElements = Thread.currentThread().getStackTrace();
+        StackTraceElement callingMethod = null;
+        if (stackTraceElements.length > 2) {
+          callingMethod = stackTraceElements[2];
+        }
+//        log.warn(e.getClass().getCanonicalName() + ". " + e.getMessage() + " exception when " + callingMethod.getMethodName() + ". Waiting 1 second and retrying...");
+        System.out.println(e.getClass().getCanonicalName() + ". " + e.getMessage() + " exception when " + callingMethod.getMethodName() + ". Waiting 1 second and retrying...");
+        try {
+          sleep(1000);
+        } catch (InterruptedException ex) {
+          throw new RuntimeException(ex);
+        }
+      }
+    } while (null != next);
+    return items;
+  }
+
+  private class Offset {
+    private final Integer offset;
+
+    private Offset(Integer offset) {
+      this.offset = offset;
+    }
+
+    public Integer offset() {
+      return this.offset;
+    }
+  }
+  ///////////MINE END
 
   /**
    * Get the top tracks of an artist in a specific country.
